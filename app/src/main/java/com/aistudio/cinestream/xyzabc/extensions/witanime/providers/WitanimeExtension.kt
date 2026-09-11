@@ -12,309 +12,216 @@ class WitAnimeExtension : ProviderExtension {
     override val isMovie: Boolean = true
     override val isSeries: Boolean = true
     override val lang: String = "ar"
-    override val iconUrl: String =
-        "https://witanime.you/wp-content/uploads/2023/08/cropped-Logo-WITU-192x192.png"
+    override val iconUrl: String = "https://witanime.you/wp-content/uploads/2023/08/cropped-Logo-WITU-192x192.png"
 
-    // ============================================================
-    // رابط البحث
-    // ============================================================
     override fun getSearchUrl(titleOriginal: String, titleClean: String): String {
-        // الموقع يستخدم WordPress: /?s=QUERY
-        return "$baseUrl/?s=" + URLEncoder.encode(titleClean, "UTF-8")
+        return "$baseUrl/?search_param=animes&s=" + URLEncoder.encode(titleClean, "UTF-8")
     }
 
-    // ============================================================
-    // سكريبت الاستخراج
-    // ============================================================
-    override fun getExtractionScript(
-    isMovie: Boolean,
-    episode: Int,
-    title: String
-): String {
-    val safeTitle = escapeForJs(title)
+    override fun getExtractionScript(isMovie: Boolean, episode: Int, title: String): String {
+        val safeTitle = escapeForJs(title)
 
-    return """
-        (function() {
-            // ========== المتغيرات المستقبلة من Kotlin ==========
-            window.witanimeTargetTitle   = "$safeTitle";
-            window.witanimeTargetEpisode = $episode;
-            window.witanimeIsMovie       = $isMovie;
-            window.witanimeSent          = false;
-
-            // ========== إرسال النتائج ==========
-            function witanimeSend(items) {
-                if (window.witanimeSent) return;
-                if (typeof AndroidBridge === 'undefined') return;
-                window.witanimeSent = true;
-                if (items && items.length > 0) {
-                    AndroidBridge.sendServersV2(JSON.stringify(items), window.location.href);
-                } else {
-                    AndroidBridge.sendFailed();
-                }
-            }
-
-            // ========== تنظيف النصوص ==========
-            function witanimeClean(txt) {
-                if (!txt) return '';
-                return txt.replace(/\s+/g, ' ').trim();
-            }
-
-            // ========== فك تشفير Base64 بأمان ==========
-            function witanimeB64Decode(str) {
-                try {
-                    var s = str.replace(/-/g, '+').replace(/_/g, '/');
-                    while (s.length % 4 !== 0) s += '=';
-                    return atob(s);
-                } catch (e) { return null; }
-            }
-
-            // ========== اختيار أفضل تطابق من نتائج البحث ==========
-            function witanimeFindBestMatch(searchTitle) {
-                var cards = document.querySelectorAll('.anime-card-container');
-                if (!cards || cards.length === 0) {
-                    cards = document.querySelectorAll('.episodes-card-container');
-                }
-                if (!cards || cards.length === 0) return null;
-
-                var words = searchTitle.toLowerCase()
-                    .split(/[\s:\.\-–—,،\(\)\[\]]+/)
-                    .filter(function(w) { return w.length > 1; });
-
-                var bestLink  = null;
-                var bestScore = -1;
-                var firstLink = null;
-
-                for (var i = 0; i < cards.length; i++) {
-                    var card    = cards[i];
-                    var linkEl  = card.querySelector('a.overlay')
-                               || card.querySelector('.anime-card-title a')
-                               || card.querySelector('h3 a');
-                    var titleEl = card.querySelector('.anime-card-title h3 a')
-                               || card.querySelector('.ep-card-anime-title h3 a')
-                               || card.querySelector('h3 a');
-                    if (!linkEl) continue;
-                    if (!firstLink) firstLink = linkEl;
-
-                    var t  = (titleEl ? titleEl.innerText : '').toLowerCase();
-                    var sc = 0;
-                    for (var w = 0; w < words.length; w++) {
-                        if (t.indexOf(words[w]) !== -1) sc++;
-                    }
-                    sc = sc - (i * 0.01);
-                    if (sc > bestScore) {
-                        bestScore = sc;
-                        bestLink  = linkEl;
+        return """
+            (function() {
+                var isSent = false;
+                
+                function sendResult(items) {
+                    if (isSent) return;
+                    isSent = true;
+                    if (typeof AndroidBridge !== 'undefined') {
+                        if (items && items.length > 0) {
+                            AndroidBridge.sendServersV2(JSON.stringify(items), window.location.href);
+                        } else {
+                            AndroidBridge.sendFailed();
+                        }
                     }
                 }
 
-                if (words.length > 0 && bestScore >= 1) return bestLink;
-                return firstLink || bestLink;
-            }
+                function getBestMatch(targetTitle) {
+                    var cards = document.querySelectorAll('.anime-card-container');
+                    if (!cards.length) return null;
 
-            // ========== المرحلة 1: صفحة البحث ==========
-            function witanimeHandleSearch() {
-                var searchTitle = window.witanimeTargetTitle;
-                if (!searchTitle) { witanimeSend([]); return; }
+                    var words = targetTitle.toLowerCase().split(/[\s:\.\-–—,،\(\)\[\]]+/).filter(w => w.length > 1);
+                    var bestLink = null;
+                    var bestScore = -1;
 
-                var attempts = 0;
-                var iv = setInterval(function() {
-                    attempts++;
-                    var link = witanimeFindBestMatch(searchTitle);
-                    if (link && link.href) {
-                        clearInterval(iv);
-                        window.location.href = link.href;
-                        return;
+                    for (var i = 0; i < cards.length; i++) {
+                        var card = cards[i];
+                        var linkEl = card.querySelector('a.overlay');
+                        var titleEl = card.querySelector('.anime-card-title h3 a');
+                        
+                        if (!linkEl || !titleEl) continue;
+
+                        var t = titleEl.innerText.toLowerCase();
+                        var sc = 0;
+                        for (var w = 0; w < words.length; w++) {
+                            if (t.includes(words[w])) sc++;
+                        }
+
+                        if (sc > bestScore) {
+                            bestScore = sc;
+                            bestLink = linkEl.href;
+                        }
                     }
-                    if (attempts > 20) {
-                        clearInterval(iv);
-                        witanimeSend([]);
-                    }
-                }, 500);
-            }
-
-            // ========== المرحلة 2: صفحة الأنمي ==========
-            function witanimeHandleAnimePage() {
-                if (document.querySelector('#episode-servers')) {
-                    witanimeHandleEpisodePage();
-                    return;
+                    return bestLink || cards[0].querySelector('a.overlay').href;
                 }
 
-                var targetEp = parseInt(window.witanimeTargetEpisode) || 1;
-
-                // ✅ محدّد دقيق: فقط الرابط الموجود داخل العنوان (يحمل نص "الحلقة X")
-                var episodeAnchors = document.querySelectorAll(
-                    '#DivEpisodesList .DivEpisodeContainer .episodes-card-title h3 a[onclick*="openEpisode"], ' +
-                    '.DivEpisodeContainer .episodes-card-title h3 a[onclick*="openEpisode"]'
-                );
-
-                if (!episodeAnchors || episodeAnchors.length === 0) {
-                    episodeAnchors = document.querySelectorAll(
-                        '.all-episodes-list li a[onclick*="openEpisode"]'
-                    );
-                }
-
-                if (!episodeAnchors || episodeAnchors.length === 0) {
-                    witanimeSend([]);
-                    return;
-                }
-
-                if (window.witanimeIsMovie) {
-                    episodeAnchors[0].click();
-                    return;
-                }
-
-                var found = null;
-                var first = episodeAnchors[0];
-                for (var i = 0; i < episodeAnchors.length; i++) {
-                    var a   = episodeAnchors[i];
-                    var txt = witanimeClean(a.textContent || a.innerText || '');
-                    var match = txt.match(/(\d+)/);
-                    if (match) {
-                        var num = parseInt(match[1], 10);
-                        if (num === targetEp) { found = a; break; }
-                    }
-                }
-
-                var chosen = found || first;
-                if (chosen) chosen.click();
-                else witanimeSend([]);
-            }
-
-            // ========== المرحلة 3: صفحة الحلقة ==========
-            function witanimeHandleEpisodePage() {
-                var buttons = document.querySelectorAll('#episode-servers li a.server-link');
-                if (!buttons || buttons.length === 0) {
-                    var waitAttempts = 0;
-                    var waitIv = setInterval(function() {
-                        waitAttempts++;
-                        var btns = document.querySelectorAll('#episode-servers li a.server-link');
-                        if (btns && btns.length > 0) {
-                            clearInterval(waitIv);
-                            witanimeExtractAllServers(btns);
-                        } else if (waitAttempts > 20) {
-                            clearInterval(waitIv);
-                            witanimeSend([]);
+                function handleSearchPage() {
+                    var targetTitle = "$safeTitle";
+                    var attempts = 0;
+                    var checkIv = setInterval(function() {
+                        attempts++;
+                        var link = getBestMatch(targetTitle);
+                        if (link) {
+                            clearInterval(checkIv);
+                            window.location.href = link;
+                        } else if (attempts > 20) {
+                            clearInterval(checkIv);
+                            sendResult([]);
                         }
                     }, 500);
+                }
+
+                function handleAnimePage() {
+                    var targetEp = $episode;
+                    var isMovie = $isMovie;
+                    
+                    var episodeLinks = document.querySelectorAll('a[onclick*="openEpisode"]');
+                    if (!episodeLinks.length) {
+                        sendResult([]);
+                        return;
+                    }
+
+                    if (isMovie) {
+                        var encodedUrl = episodeLinks[0].getAttribute('onclick').match(/openEpisode\('([^']+)'\)/);
+                        if (encodedUrl && encodedUrl[1]) {
+                            window.location.href = atob(encodedUrl[1]);
+                            return;
+                        }
+                    }
+
+                    var foundLink = null;
+                    for (var i = 0; i < episodeLinks.length; i++) {
+                        var a = episodeLinks[i];
+                        var txt = a.innerText.trim();
+                        var match = txt.match(/(\d+)/);
+                        if (match && parseInt(match[1], 10) === targetEp) {
+                            foundLink = a;
+                            break;
+                        }
+                    }
+
+                    var chosen = foundLink || episodeLinks[episodeLinks.length - 1]; // إذا لم يجد يختار الأحدث
+                    if (chosen) {
+                        var encodedUrl = chosen.getAttribute('onclick').match(/openEpisode\('([^']+)'\)/);
+                        if (encodedUrl && encodedUrl[1]) {
+                            window.location.href = atob(encodedUrl[1]);
+                        } else {
+                            sendResult([]);
+                        }
+                    } else {
+                        sendResult([]);
+                    }
+                }
+
+                function handleEpisodePage() {
+                    // في موقع witanime يتم استخدام Base64 لفك الروابط أو يتم تحديث الـ iframe مباشرة.
+                    // نحن سنجمع السيرفرات المتوفرة
+                    var serversList = [];
+                    var serverTabs = document.querySelectorAll('#episode-servers li a.server-link');
+                    
+                    if (!serverTabs || serverTabs.length === 0) {
+                        // إذا لم تظهر السيرفرات بعد، انتظر قليلاً
+                        var waitAttempts = 0;
+                        var waitIv = setInterval(function() {
+                            waitAttempts++;
+                            serverTabs = document.querySelectorAll('#episode-servers li a.server-link');
+                            if (serverTabs.length > 0) {
+                                clearInterval(waitIv);
+                                extractServersBySimulatingClicks(serverTabs);
+                            } else if (waitAttempts > 20) {
+                                clearInterval(waitIv);
+                                sendResult([]);
+                            }
+                        }, 500);
+                        return;
+                    }
+                    
+                    extractServersBySimulatingClicks(serverTabs);
+                }
+                
+                function extractServersBySimulatingClicks(tabs) {
+                     var results = [];
+                     var currentIndex = 0;
+                     var maxAttempts = 15;
+                     
+                     function nextServer() {
+                         if (currentIndex >= tabs.length) {
+                             sendResult(results);
+                             return;
+                         }
+                         
+                         var tab = tabs[currentIndex];
+                         var nameEl = tab.querySelector('.ser');
+                         var serverName = nameEl ? nameEl.innerText.trim() : "سيرفر " + (currentIndex + 1);
+                         
+                         var iframe = document.querySelector('#iframe-container iframe') || document.querySelector('.videoWrapper iframe');
+                         var oldSrc = iframe ? iframe.src : "";
+                         
+                         try { tab.click(); } catch(e){}
+                         
+                         var pollAttempts = 0;
+                         var pollIv = setInterval(function() {
+                             pollAttempts++;
+                             var currentIframe = document.querySelector('#iframe-container iframe') || document.querySelector('.videoWrapper iframe');
+                             var newSrc = currentIframe ? currentIframe.src : "";
+                             
+                             if ((newSrc && newSrc !== oldSrc && newSrc.indexOf('http') === 0) || pollAttempts >= maxAttempts) {
+                                 clearInterval(pollIv);
+                                 if (newSrc && newSrc.indexOf('http') === 0) {
+                                     // منع التكرار
+                                     var isDuplicate = results.some(function(r) { return r.url === newSrc; });
+                                     if (!isDuplicate) {
+                                         results.push({ name: serverName, url: newSrc });
+                                     }
+                                 }
+                                 currentIndex++;
+                                 nextServer(); // الانتقال للسيرفر التالي بدون تأخير إضافي طويل
+                             }
+                         }, 200);
+                     }
+                     
+                     nextServer();
+                }
+
+                // ================= نقطة البداية =================
+                var host = window.location.hostname;
+                var path = window.location.pathname;
+                var search = window.location.search;
+
+                if (host.indexOf('witanime') === -1) {
+                    sendResult([]);
                     return;
                 }
-                witanimeExtractAllServers(buttons);
-            }
 
-            // ========== النقر على كل سيرفر بالتتابع لجمع روابطه ==========
-            function witanimeExtractAllServers(buttons) {
-                var results   = [];
-                var index     = 0;
-                var maxAttemptsPerServer = 12;
-                var maxTotalTime = 60000;
-                var startTime = Date.now();
-
-                function stepNext() {
-                    if (index >= buttons.length || (Date.now() - startTime) > maxTotalTime) {
-                        witanimeSend(results);
-                        return;
-                    }
-
-                    var btn    = buttons[index];
-                    var nameEl = btn.querySelector('.ser');
-                    var name   = nameEl ? witanimeClean(nameEl.textContent || nameEl.innerText) : '';
-                    if (!name) name = 'سيرفر ' + (index + 1);
-
-                    var iframe = document.querySelector('#iframe-container iframe')
-                              || document.querySelector('.videoWrapper iframe');
-                    var oldSrc = iframe ? iframe.src : '';
-
-                    try { btn.click(); } catch (e) { /* ignore */ }
-
-                    var attempts = 0;
-                    var poll = setInterval(function() {
-                        attempts++;
-                        var ifr    = document.querySelector('#iframe-container iframe')
-                                  || document.querySelector('.videoWrapper iframe');
-                        var newSrc = ifr ? ifr.src : '';
-                        var changed = (newSrc && newSrc.indexOf('http') === 0 && newSrc !== oldSrc);
-
-                        if (changed || attempts >= maxAttemptsPerServer) {
-                            clearInterval(poll);
-                            if (newSrc && newSrc.indexOf('http') === 0) {
-                                var duplicate = false;
-                                for (var r = 0; r < results.length; r++) {
-                                    if (results[r].url === newSrc) { duplicate = true; break; }
-                                }
-                                if (!duplicate) {
-                                    results.push({ name: name, url: newSrc });
-                                }
-                            }
-                            index++;
-                            setTimeout(stepNext, 150);
-                        }
-                    }, 250);
-                }
-
-                stepNext();
-            }
-
-            // ========== تحديد نوع الصفحة وتنفيذ المنطق ==========
-            var host   = window.location.hostname;
-            var path   = window.location.pathname;
-            var search = window.location.search || '';
-
-            if (host.indexOf('witanime') === -1) {
-                witanimeSend([]);
-                return;
-            }
-
-            setTimeout(function() {
-                try {
-                    // 1) صفحة الحلقة (تحتوي على السيرفرات)
+                setTimeout(function() {
                     if (document.querySelector('#episode-servers')) {
-                        witanimeHandleEpisodePage();
-                        return;
+                        handleEpisodePage();
+                    } else if (document.querySelector('.anime-card-container') && search.includes('?s=')) {
+                        handleSearchPage();
+                    } else if (document.querySelector('#DivEpisodesList') || document.querySelector('.anime-info-container')) {
+                        handleAnimePage();
+                    } else {
+                        // محاولة أخيرة بناءً على الرابط
+                        if (path.indexOf('/episode/') !== -1) handleEpisodePage();
+                        else if (path.indexOf('/anime/') !== -1) handleAnimePage();
+                        else sendResult([]);
                     }
+                }, 1000); // زيادة وقت الانتظار الأولي قليلاً لضمان تحميل سكريبتات الموقع
+            })();
+        """.trimIndent()
+    }
 
-                    // ✅ 2) صفحة البحث — بدون :contains() (jQuery فقط)
-                    var isSearchPage =
-                        /[?&]s=/.test(search) ||
-                        !!document.querySelector('.anime-list-content') ||
-                        !!document.querySelector('.second-section');
-                    if (isSearchPage) {
-                        witanimeHandleSearch();
-                        return;
-                    }
-
-                    // 3) صفحة الأنمي
-                    if (document.querySelector('#DivEpisodesList') ||
-                        document.querySelector('.anime-info-container')) {
-                        witanimeHandleAnimePage();
-                        return;
-                    }
-
-                    // 4) احتياطي حسب المسار
-                    if (path.indexOf('/episode/') !== -1) {
-                        witanimeHandleEpisodePage();
-                        return;
-                    }
-                    if (path.indexOf('/anime/') !== -1) {
-                        witanimeHandleAnimePage();
-                        return;
-                    }
-
-                    witanimeSend([]);
-                } catch (err) {
-                    witanimeSend([]);
-                }
-            }, 700);
-        })();
-    """.trimIndent()
-}
-
-    // ============================================================
-    // دوال مساعدة
-    // ============================================================
-
-    /**
-     * تهيئة النص للاستخدام داخل كود JavaScript بين علامتي اقتباس مزدوجتين.
-     */
     private fun escapeForJs(s: String): String {
         return s.replace("\\", "\\\\")
             .replace("\"", "\\\"")
