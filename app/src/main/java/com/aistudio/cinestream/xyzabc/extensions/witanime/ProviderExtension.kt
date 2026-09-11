@@ -1,4 +1,4 @@
-package com.aistudio.cinestream.xyzabc.extensions.qfilm
+package com.aistudio.cinestream.xyzabc.extensions.witanime
 
 /**
  * هذه هي الواجهة (Interface) الأساسية.

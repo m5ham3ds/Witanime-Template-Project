@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.aistudio.cinestream.xyzabc.extensions.qfilm"
+    namespace = "com.aistudio.cinestream.xyzabc.extensions.witanime"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.aistudio.cinestream.xyzabc.extensions.qfilm"
+        applicationId = "com.aistudio.cinestream.xyzabc.extensions.witanime"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
